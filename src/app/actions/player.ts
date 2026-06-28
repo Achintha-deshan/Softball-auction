@@ -100,3 +100,52 @@ export async function addRetainedPlayer(
   revalidatePath(`/dashboard/league/${leagueId}`)
   return { success: true }
 }
+
+// sold player kenekge price / team eka maaru karanawa
+export async function updateSoldPlayer(
+  leagueId: string,
+  playerId: string,
+  newTeamId: string,
+  newPrice: number
+) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not logged in.' }
+
+  const { data: league } = await supabase
+    .from('leagues').select('id').eq('id', leagueId).eq('owner_id', user.id).single()
+  if (!league) return { error: 'Not your league.' }
+
+  const { createAdminClient } = await import('@/utils/supabase/admin')
+  const admin = createAdminClient()
+
+  const { error } = await admin.from('players')
+    .update({ sold_to_team_id: newTeamId, sold_price: newPrice })
+    .eq('id', playerId)
+
+  if (error) return { error: error.message }
+  revalidatePath(`/dashboard/league/${leagueId}`)
+  return { success: true }
+}
+
+// sold player kenekwa aye pool ekata danawa (sale eka cancel)
+export async function unsellPlayer(leagueId: string, playerId: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not logged in.' }
+
+  const { data: league } = await supabase
+    .from('leagues').select('id').eq('id', leagueId).eq('owner_id', user.id).single()
+  if (!league) return { error: 'Not your league.' }
+
+  const { createAdminClient } = await import('@/utils/supabase/admin')
+  const admin = createAdminClient()
+
+  const { error } = await admin.from('players')
+    .update({ status: 'pool', sold_to_team_id: null, sold_price: null, is_retained: false })
+    .eq('id', playerId)
+
+  if (error) return { error: error.message }
+  revalidatePath(`/dashboard/league/${leagueId}`)
+  return { success: true }
+}

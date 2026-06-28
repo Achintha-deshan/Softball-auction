@@ -35,10 +35,9 @@ export default function ManagerView({ leagueId, teamId }: { leagueId: string; te
     if (au.data) setAuction(au.data)
   }, [leagueId, teamId, supabase])
 
-useEffect(() => {
+  useEffect(() => {
     load()
 
-    // realtime: auction_state / players / teams maaru unaama -> aye load
     const channel = supabase
       .channel(`league-${leagueId}`)
       .on('postgres_changes',
@@ -57,7 +56,7 @@ useEffect(() => {
 
     return () => { supabase.removeChannel(channel) }
   }, [load, leagueId, supabase])
-  
+
   const mySquad = players.filter((p) => p.sold_to_team_id === teamId && p.status === 'sold')
   const spent = mySquad.reduce((s, p) => s + (p.sold_price || 0), 0)
   const left = (team?.budget || 0) - spent
@@ -67,6 +66,14 @@ useEffect(() => {
     : null
   const leadTeam = auction?.leading_team_id ? teams.find((t) => t.id === auction.leading_team_id) : null
   const iLead = auction?.leading_team_id === teamId
+
+  // wadima mudalata sold una player
+  const highestSold = players
+    .filter((p) => p.status === 'sold' && p.sold_price)
+    .sort((a, b) => (b.sold_price || 0) - (a.sold_price || 0))[0] || null
+  const highestTeam = highestSold
+    ? teams.find((t) => t.id === highestSold.sold_to_team_id)
+    : null
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-4 max-w-lg mx-auto">
@@ -134,6 +141,43 @@ useEffect(() => {
       {iLead && auction?.status !== 'sold' && (
         <div className="bg-amber-500/15 border border-amber-400 text-amber-300 rounded-xl p-3 text-center font-semibold mb-5">
           🔥 You're the top bid!
+        </div>
+      )}
+
+      {/* highest sold */}
+      {highestSold && (
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-slate-400 mb-2 flex items-center gap-1">🏆 Most expensive</h3>
+          <div className="relative rounded-2xl overflow-hidden border border-amber-500/40">
+            {highestSold.image_url ? (
+              <img src={highestSold.image_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-b from-slate-700 to-slate-900 flex items-center justify-center">
+                <span className="text-7xl font-black text-slate-600">{highestSold.number ?? '?'}</span>
+              </div>
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/50 to-amber-500/10" />
+            <div className="relative z-10 min-h-[300px] flex flex-col justify-end p-5">
+              <div className="absolute top-3 right-3 bg-amber-500 text-slate-900 font-black px-3 py-1 rounded-full text-sm tabular-nums">
+                Rs {(highestSold.sold_price || 0).toLocaleString()}
+              </div>
+              <h2 className="text-2xl font-black drop-shadow-lg">{highestSold.name}</h2>
+              <div className="text-slate-200 text-xs mt-0.5">
+                {highestSold.number != null && `#${highestSold.number} · `}
+                {highestSold.role === 'both' ? 'All-rounder' : highestSold.role || 'Player'}
+              </div>
+              {highestTeam && (
+                <div className="flex items-center gap-2 mt-3 bg-black/50 backdrop-blur w-fit px-2.5 py-1.5 rounded-lg">
+                  <div className="w-6 h-6 rounded bg-slate-700 overflow-hidden flex items-center justify-center text-xs flex-none">
+                    {highestTeam.logo_url
+                      ? <img src={highestTeam.logo_url} alt="" className="w-full h-full object-cover" />
+                      : '🛡️'}
+                  </div>
+                  <span className="font-bold text-sm">{highestTeam.name}</span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

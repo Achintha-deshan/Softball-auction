@@ -32,8 +32,9 @@ export default async function AuctionPage({
         </Link>
         <h1 className="text-2xl font-bold mt-1">{league.name} — Live Auction</h1>
       </header>
-      <AuctionRoom
+     <AuctionRoom
         leagueId={id}
+        leagueName={league.name}
         teams={teams ?? []}
         players={players ?? []}
         bidTiers={league.bid_tiers ?? []}
