@@ -14,6 +14,7 @@ type Auction = {
   current_player_id: string | null; current_bid: number
   leading_team_id: string | null; status: string
 }
+type League = { players_per_team: number; min_bid: number }
 
 export default function ManagerView({ leagueId, teamId }: { leagueId: string; teamId: string }) {
   const supabase = createClient()
@@ -21,39 +22,31 @@ export default function ManagerView({ leagueId, teamId }: { leagueId: string; te
   const [players, setPlayers] = useState<Player[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [auction, setAuction] = useState<Auction | null>(null)
+  const [league, setLeague] = useState<League | null>(null)
 
   const load = useCallback(async () => {
-    const [t, ps, ts, au] = await Promise.all([
+    const [t, ps, ts, au, lg] = await Promise.all([
       supabase.from('teams').select('*').eq('id', teamId).single(),
       supabase.from('players').select('*').eq('league_id', leagueId),
       supabase.from('teams').select('*').eq('league_id', leagueId),
       supabase.from('auction_state').select('*').eq('league_id', leagueId).single(),
+      supabase.from('leagues').select('players_per_team, min_bid').eq('id', leagueId).single(),
     ])
     if (t.data) setTeam(t.data)
     if (ps.data) setPlayers(ps.data)
     if (ts.data) setTeams(ts.data)
     if (au.data) setAuction(au.data)
+    if (lg.data) setLeague(lg.data)
   }, [leagueId, teamId, supabase])
 
   useEffect(() => {
     load()
-
     const channel = supabase
       .channel(`league-${leagueId}`)
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'auction_state', filter: `league_id=eq.${leagueId}` },
-        () => load()
-      )
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'players', filter: `league_id=eq.${leagueId}` },
-        () => load()
-      )
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'teams', filter: `league_id=eq.${leagueId}` },
-        () => load()
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_state', filter: `league_id=eq.${leagueId}` }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `league_id=eq.${leagueId}` }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams', filter: `league_id=eq.${leagueId}` }, () => load())
       .subscribe()
-
     return () => { supabase.removeChannel(channel) }
   }, [load, leagueId, supabase])
 
@@ -67,13 +60,19 @@ export default function ManagerView({ leagueId, teamId }: { leagueId: string; te
   const leadTeam = auction?.leading_team_id ? teams.find((t) => t.id === auction.leading_team_id) : null
   const iLead = auction?.leading_team_id === teamId
 
-  // wadima mudalata sold una player
+  // ===== mata me ganata gnna puluwand? =====
+  const target = league?.players_per_team || 0
+  const minBid = league?.min_bid || 5000
+  const myNeed = Math.max(0, target - mySquad.length)
+  const myMax = myNeed > 0 ? left - (myNeed - 1) * minBid : 0
+  const liveBid = auction?.current_bid || 0
+  const isLive = onBlock && auction?.status === 'live'
+  const canBuy = myNeed > 0 && liveBid <= myMax
+
   const highestSold = players
     .filter((p) => p.status === 'sold' && p.sold_price)
     .sort((a, b) => (b.sold_price || 0) - (a.sold_price || 0))[0] || null
-  const highestTeam = highestSold
-    ? teams.find((t) => t.id === highestSold.sold_to_team_id)
-    : null
+  const highestTeam = highestSold ? teams.find((t) => t.id === highestSold.sold_to_team_id) : null
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-4 max-w-lg mx-auto">
@@ -84,7 +83,7 @@ export default function ManagerView({ leagueId, teamId }: { leagueId: string; te
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-xl font-black truncate">{team?.name}</div>
-          <div className="text-xs text-slate-400">{mySquad.length} players</div>
+          <div className="text-xs text-slate-400">{mySquad.length}/{target} players · need {myNeed} more</div>
         </div>
         <div className="text-right flex-none">
           <div className="text-[10px] uppercase tracking-widest text-slate-400">Budget left</div>
@@ -121,7 +120,7 @@ export default function ManagerView({ leagueId, teamId }: { leagueId: string; te
                 {auction?.status === 'sold' ? 'Sold for' : 'Current bid'}
               </div>
               <div className="text-5xl font-black text-amber-400 tabular-nums drop-shadow-lg">
-                {(auction?.current_bid || 0).toLocaleString()}
+                {liveBid.toLocaleString()}
               </div>
               {leadTeam && (
                 <span className="inline-block mt-2 bg-black/50 backdrop-blur px-3 py-1 rounded-full text-sm font-semibold">
@@ -138,10 +137,25 @@ export default function ManagerView({ leagueId, teamId }: { leagueId: string; te
         </div>
       )}
 
-      {iLead && auction?.status !== 'sold' && (
-        <div className="bg-amber-500/15 border border-amber-400 text-amber-300 rounded-xl p-3 text-center font-semibold mb-5">
-          🔥 You're the top bid!
-        </div>
+      {/* can I buy at this price? */}
+      {isLive && (
+        iLead ? (
+          <div className="bg-amber-500/15 border border-amber-400 text-amber-300 rounded-xl p-3 text-center font-semibold mb-5">
+            🔥 You're the top bid!
+          </div>
+        ) : myNeed <= 0 ? (
+          <div className="bg-slate-800 border border-slate-700 text-slate-300 rounded-xl p-3 text-center font-semibold mb-5">
+            ✅ Your squad is full ({target} players)
+          </div>
+        ) : canBuy ? (
+          <div className="bg-emerald-500/15 border border-emerald-500/50 text-emerald-300 rounded-xl p-3 text-center font-semibold mb-5">
+            ✅ You can buy at this price
+          </div>
+        ) : (
+          <div className="bg-red-500/15 border border-red-500/50 text-red-300 rounded-xl p-3 text-center text-sm font-semibold mb-5">
+            ❌ Can’t take at this price — keep Rs {((myNeed - 1) * minBid).toLocaleString()} for {myNeed - 1} more player(s). Your max: Rs {myMax.toLocaleString()}
+          </div>
+        )
       )}
 
       {/* highest sold */}
@@ -169,9 +183,7 @@ export default function ManagerView({ leagueId, teamId }: { leagueId: string; te
               {highestTeam && (
                 <div className="flex items-center gap-2 mt-3 bg-black/50 backdrop-blur w-fit px-2.5 py-1.5 rounded-lg">
                   <div className="w-6 h-6 rounded bg-slate-700 overflow-hidden flex items-center justify-center text-xs flex-none">
-                    {highestTeam.logo_url
-                      ? <img src={highestTeam.logo_url} alt="" className="w-full h-full object-cover" />
-                      : '🛡️'}
+                    {highestTeam.logo_url ? <img src={highestTeam.logo_url} alt="" className="w-full h-full object-cover" /> : '🛡️'}
                   </div>
                   <span className="font-bold text-sm">{highestTeam.name}</span>
                 </div>

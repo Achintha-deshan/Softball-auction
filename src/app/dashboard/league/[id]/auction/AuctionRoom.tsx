@@ -19,9 +19,10 @@ type Player = {
 }
 
 export default function AuctionRoom({
-  leagueId, leagueName, teams, players, bidTiers,
+  leagueId, leagueName, teams, players, bidTiers, playersPerTeam, minBid,
 }: {
-  leagueId: string; leagueName: string; teams: Team[]; players: Player[]; bidTiers: Tier[]
+  leagueId: string; leagueName: string; teams: Team[]; players: Player[]
+  bidTiers: Tier[]; playersPerTeam: number; minBid: number
 }) {
   const [current, setCurrent] = useState<Player | null>(null)
   const [bid, setBid] = useState(0)
@@ -32,12 +33,10 @@ export default function AuctionRoom({
   const [viewTeam, setViewTeam] = useState<string | null>(null)
   const [cardTeam, setCardTeam] = useState<string | null>(null)
 
-  // edit sold player
   const [editPlayer, setEditPlayer] = useState<Player | null>(null)
   const [editPrice, setEditPrice] = useState(0)
   const [editTeam, setEditTeam] = useState('')
 
-  // auction page eken yanakota block eka idle karanawa
   useEffect(() => {
     return () => { clearBlock(leagueId) }
   }, [leagueId])
@@ -55,6 +54,24 @@ export default function AuctionRoom({
     return players
       .filter((p) => p.sold_to_team_id === teamId && p.status === 'sold')
       .sort((a, b) => (b.sold_price || 0) - (a.sold_price || 0))
+  }
+
+  // ===== reserve / budget rules =====
+  function squadCount(teamId: string) {
+    return players.filter((p) => p.sold_to_team_id === teamId && p.status === 'sold').length
+  }
+  function stillNeeded(teamId: string) {
+    return Math.max(0, playersPerTeam - squadCount(teamId))
+  }
+  // me player ta danna puluwan max (ithuru ayata reserve karala)
+  function maxAffordable(teamId: string) {
+    const need = stillNeeded(teamId)
+    if (need <= 0) return 0
+    const reserve = (need - 1) * minBid
+    return teamLeft(teamId) - reserve
+  }
+  function canAfford(teamId: string, amount: number) {
+    return stillNeeded(teamId) > 0 && amount <= maxAffordable(teamId)
   }
 
   function nextStep(currentBid: number): number {
@@ -84,8 +101,8 @@ export default function AuctionRoom({
   }
   async function doSell() {
     if (!current || !leadTeam) return
-    if (teamLeft(leadTeam) < bid) {
-      alert('That team cannot afford this bid.')
+    if (!canAfford(leadTeam, bid)) {
+      alert('That team cannot take this player at this price (must reserve budget for remaining players).')
       return
     }
     setBusy(true)
@@ -103,7 +120,6 @@ export default function AuctionRoom({
     setCurrent(null); setLeadTeam(null); setSold(false)
   }
 
-  // edit sold player
   function openEdit(p: Player) {
     setEditPlayer(p)
     setEditPrice(p.sold_price || 0)
@@ -134,6 +150,11 @@ export default function AuctionRoom({
 
   const leadTeamObj = teams.find((t) => t.id === leadTeam)
 
+  // lead team affordability (derived — bid maaru unaama auto)
+  const leadNeed = leadTeam ? stillNeeded(leadTeam) : 0
+  const leadMax = leadTeam ? maxAffordable(leadTeam) : 0
+  const leadOk = leadTeam ? canAfford(leadTeam, bid) : false
+
   const highestSold = players
     .filter((p) => p.status === 'sold' && p.sold_price)
     .sort((a, b) => (b.sold_price || 0) - (a.sold_price || 0))[0] || null
@@ -155,9 +176,7 @@ export default function AuctionRoom({
                   <span className="text-9xl font-black text-slate-600">{current.number ?? '?'}</span>
                 </div>
               )}
-
               <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/10" />
-
               {sold && (
                 <div className="absolute inset-0 flex items-center justify-center z-20">
                   <span className="text-6xl font-black text-emerald-400 border-4 border-emerald-400 rounded-2xl px-10 py-4 -rotate-12 bg-slate-900/70">
@@ -165,7 +184,6 @@ export default function AuctionRoom({
                   </span>
                 </div>
               )}
-
               <div className="relative z-10 p-7">
                 <h2 className="text-4xl font-black drop-shadow-lg">{current.name}</h2>
                 <div className="text-slate-200 text-sm mt-1 drop-shadow">
@@ -177,7 +195,6 @@ export default function AuctionRoom({
                 {current.current_team && (
                   <div className="text-slate-400 text-xs mt-1 drop-shadow">From: {current.current_team}</div>
                 )}
-
                 <div className="mt-5 pt-5 border-t border-white/15">
                   <div className="text-xs uppercase tracking-widest text-slate-300">
                     {sold ? 'Sold for' : 'Current bid'}
@@ -229,21 +246,26 @@ export default function AuctionRoom({
                 <div className="text-xs uppercase tracking-wider text-slate-400 mb-2">Top bidder — tap a team</div>
                 <div className="grid grid-cols-2 gap-2">
                   {teams.map((t) => {
-                    const left = teamLeft(t.id)
-                    const broke = left < bid
+                    const need = stillNeeded(t.id)
+                    const maxA = maxAffordable(t.id)
+                    const ok = need > 0 && maxA >= bid
                     return (
                       <button key={t.id}
                         onClick={() => setLeadTeam(t.id)}
                         className={`flex items-center gap-2 p-2 rounded-lg border text-left transition
                           ${leadTeam === t.id ? 'border-amber-400 bg-amber-400/10' : 'border-slate-700 bg-slate-800'}
-                          ${broke ? 'opacity-50' : ''}`}>
+                          ${!ok ? 'opacity-50' : ''}`}>
                         <div className="w-8 h-8 rounded bg-slate-700 overflow-hidden flex items-center justify-center text-xs flex-none">
                           {t.logo_url ? <img src={t.logo_url} alt="" className="w-full h-full object-cover" /> : '🛡️'}
                         </div>
                         <div className="min-w-0">
                           <div className="text-sm font-semibold truncate">{t.name}</div>
-                          <div className={`text-xs ${broke ? 'text-red-400' : 'text-slate-400'}`}>
-                            Left: {left.toLocaleString()}
+                          <div className={`text-xs ${ok ? 'text-slate-400' : 'text-red-400'}`}>
+                            {need <= 0
+                              ? 'Squad full'
+                              : ok
+                                ? `Left ${teamLeft(t.id).toLocaleString()} · need ${need}`
+                                : `Max ${maxA.toLocaleString()}`}
                           </div>
                         </div>
                       </button>
@@ -252,8 +274,18 @@ export default function AuctionRoom({
                 </div>
               </div>
 
+              {/* lead team affordability warning */}
+              {leadTeam && !leadOk && (
+                <div className="bg-red-500/15 border border-red-500/40 text-red-300 rounded-lg px-3 py-2 text-sm">
+                  ⚠️ {leadTeamObj?.name} can’t take at this price.{' '}
+                  {leadNeed <= 0
+                    ? 'Squad already full.'
+                    : `Max bid Rs ${leadMax.toLocaleString()} — keep Rs ${((leadNeed - 1) * minBid).toLocaleString()} for ${leadNeed - 1} more player(s).`}
+                </div>
+              )}
+
               <div className="flex gap-2 pt-2">
-                <button onClick={doSell} disabled={!leadTeam || busy}
+                <button onClick={doSell} disabled={!leadTeam || !leadOk || busy}
                   className="flex-1 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-bold disabled:opacity-40">
                   ✓ SOLD
                 </button>
@@ -316,37 +348,29 @@ export default function AuctionRoom({
       {/* ===== HIGHEST SOLD ===== */}
       {highestSold && (
         <div className="mt-10">
-          <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-            🏆 Most expensive player
-          </h3>
+          <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">🏆 Most expensive player</h3>
           <div className="relative rounded-2xl overflow-hidden border border-amber-500/40 max-w-md mx-auto">
             {highestSold.image_url ? (
-              <img src={highestSold.image_url} alt=""
-                className="absolute inset-0 w-full h-full object-cover" />
+              <img src={highestSold.image_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
             ) : (
               <div className="absolute inset-0 bg-gradient-to-b from-slate-700 to-slate-900 flex items-center justify-center">
                 <span className="text-9xl font-black text-slate-600">{highestSold.number ?? '?'}</span>
               </div>
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/50 to-amber-500/10" />
-
             <div className="relative z-10 min-h-[380px] flex flex-col justify-end p-6">
               <div className="absolute top-4 right-4 bg-amber-500 text-slate-900 font-black text-lg px-4 py-1.5 rounded-full shadow-lg tabular-nums">
                 Rs {(highestSold.sold_price || 0).toLocaleString()}
               </div>
-
               <h2 className="text-4xl font-black drop-shadow-lg">{highestSold.name}</h2>
               <div className="text-slate-200 text-sm mt-1 drop-shadow">
                 {highestSold.number != null && `#${highestSold.number} · `}
                 {highestSold.role === 'both' ? 'All-rounder' : highestSold.role || 'Player'}
               </div>
-
               {highestTeam && (
                 <div className="flex items-center gap-2 mt-4 bg-black/50 backdrop-blur w-fit px-3 py-2 rounded-xl">
                   <div className="w-8 h-8 rounded bg-slate-700 overflow-hidden flex items-center justify-center text-xs flex-none">
-                    {highestTeam.logo_url
-                      ? <img src={highestTeam.logo_url} alt="" className="w-full h-full object-cover" />
-                      : '🛡️'}
+                    {highestTeam.logo_url ? <img src={highestTeam.logo_url} alt="" className="w-full h-full object-cover" /> : '🛡️'}
                   </div>
                   <span className="font-bold">{highestTeam.name}</span>
                 </div>
@@ -369,7 +393,7 @@ export default function AuctionRoom({
                 {t.logo_url ? <img src={t.logo_url} alt="" className="w-full h-full object-cover" /> : '🛡️'}
               </div>
               <span className="text-sm font-semibold">{t.name}</span>
-              <span className="text-xs text-emerald-400">{teamSquad(t.id).length}</span>
+              <span className="text-xs text-emerald-400">{teamSquad(t.id).length}/{playersPerTeam}</span>
             </button>
           ))}
         </div>
@@ -378,13 +402,12 @@ export default function AuctionRoom({
           const t = teams.find((x) => x.id === viewTeam)!
           const squad = teamSquad(viewTeam)
           const spent = teamSpent(viewTeam)
+          const need = stillNeeded(viewTeam)
           return (
             <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden max-w-2xl">
               <div className="flex items-center gap-4 p-5 border-b border-slate-800 bg-slate-800/40">
                 <div className="w-14 h-14 rounded-full bg-slate-700 overflow-hidden flex items-center justify-center flex-none">
-                  {t.manager_photo_url
-                    ? <img src={t.manager_photo_url} alt="" className="w-full h-full object-cover" />
-                    : '👤'}
+                  {t.manager_photo_url ? <img src={t.manager_photo_url} alt="" className="w-full h-full object-cover" /> : '👤'}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -404,12 +427,13 @@ export default function AuctionRoom({
                   <div className="text-xl font-black text-emerald-400 tabular-nums">
                     {(t.budget - spent).toLocaleString()}
                   </div>
+                  <div className="text-xs text-slate-400">need {need} more</div>
                 </div>
               </div>
 
               <div className="p-4">
                 <div className="text-xs text-slate-400 mb-2">
-                  {squad.length} players · spent {spent.toLocaleString()}
+                  {squad.length}/{playersPerTeam} players · spent {spent.toLocaleString()}
                 </div>
                 {squad.length === 0 ? (
                   <p className="text-slate-500 text-sm py-4 text-center">No players bought yet.</p>
@@ -451,27 +475,20 @@ export default function AuctionRoom({
             onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-1">Edit sale</h3>
             <p className="text-sm text-slate-400 mb-5">{editPlayer.name}</p>
-
             <label className="block text-xs text-slate-400 mb-1">Team</label>
             <select value={editTeam} onChange={(e) => setEditTeam(e.target.value)}
               className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 outline-none focus:border-amber-500 mb-4">
               {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
-
             <label className="block text-xs text-slate-400 mb-1">Sold price (Rs)</label>
             <input type="number" value={editPrice}
               onChange={(e) => setEditPrice(parseInt(e.target.value) || 0)}
               className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-amber-400 font-bold outline-none focus:border-amber-500 mb-6" />
-
             <div className="flex gap-2">
               <button onClick={saveEdit}
-                className="flex-1 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">
-                Save
-              </button>
+                className="flex-1 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">Save</button>
               <button onClick={() => setEditPlayer(null)}
-                className="px-4 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600">
-                Cancel
-              </button>
+                className="px-4 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600">Cancel</button>
             </div>
             <button onClick={cancelSale}
               className="w-full mt-3 py-2 rounded-lg bg-red-500/15 text-red-300 border border-red-500/40 text-sm font-semibold">
@@ -488,27 +505,18 @@ export default function AuctionRoom({
         return (
           <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-xl flex items-center justify-center p-4 overflow-auto"
             onClick={() => setCardTeam(null)}>
-            <div
-              onClick={(e) => e.stopPropagation()}
+            <div onClick={(e) => e.stopPropagation()}
               className="relative w-full max-w-3xl bg-gradient-to-br from-slate-800 via-slate-900 to-black border border-amber-500/30 rounded-3xl overflow-hidden shadow-2xl">
-
               <button onClick={() => setCardTeam(null)}
-                className="absolute top-4 right-4 z-20 w-9 h-9 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white">
-                ✕
-              </button>
-
+                className="absolute top-4 right-4 z-20 w-9 h-9 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white">✕</button>
               <div className="text-center pt-8 pb-5 px-6 border-b border-white/10">
                 <div className="text-amber-400 text-xs uppercase tracking-[0.3em] font-semibold">{leagueName}</div>
                 <h2 className="text-4xl font-black mt-1">{t.name}</h2>
               </div>
-
               <div className="grid md:grid-cols-[260px_1fr] gap-0">
-                {/* left: manager */}
                 <div className="flex flex-col items-center justify-center p-8 border-b md:border-b-0 md:border-r border-white/10 bg-black/20">
                   <div className="w-40 h-40 rounded-2xl overflow-hidden border-4 border-amber-500/50 bg-slate-700 flex items-center justify-center text-6xl shadow-xl">
-                    {t.manager_photo_url
-                      ? <img src={t.manager_photo_url} alt="" className="w-full h-full object-cover" />
-                      : '👤'}
+                    {t.manager_photo_url ? <img src={t.manager_photo_url} alt="" className="w-full h-full object-cover" /> : '👤'}
                   </div>
                   <div className="mt-4 text-center">
                     <div className="text-[10px] uppercase tracking-widest text-slate-400">Manager</div>
@@ -520,12 +528,8 @@ export default function AuctionRoom({
                     </div>
                   )}
                 </div>
-
-                {/* right: squad */}
                 <div className="p-6">
-                  <div className="text-xs uppercase tracking-widest text-slate-400 mb-3">
-                    Squad ({squad.length})
-                  </div>
+                  <div className="text-xs uppercase tracking-widest text-slate-400 mb-3">Squad ({squad.length}/{playersPerTeam})</div>
                   {squad.length === 0 ? (
                     <p className="text-slate-500 text-sm py-8 text-center">No players yet.</p>
                   ) : (
@@ -533,9 +537,7 @@ export default function AuctionRoom({
                       {squad.map((p) => (
                         <div key={p.id} className="text-center">
                           <div className="w-full aspect-square rounded-xl overflow-hidden bg-slate-700 flex items-center justify-center text-2xl mb-1 border border-white/10">
-                            {p.image_url
-                              ? <img src={p.image_url} alt="" className="w-full h-full object-cover" />
-                              : (p.number ?? '?')}
+                            {p.image_url ? <img src={p.image_url} alt="" loading="lazy" className="w-full h-full object-cover" /> : (p.number ?? '?')}
                           </div>
                           <div className="text-xs font-semibold truncate">{p.name}</div>
                           {p.is_retained && <div className="text-[9px] text-blue-400 font-bold">RET</div>}
